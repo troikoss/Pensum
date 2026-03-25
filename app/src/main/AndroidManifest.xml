@@ -16,6 +16,9 @@
         android:theme="@style/Theme.TaskManager">
         <activity
             android:name=".MainActivity"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.TaskManager">
@@ -24,6 +27,14 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <layout
+                android:defaultWidth="575dp"
+                android:defaultHeight="700dp"
+                android:gravity="center"
+                android:minWidth="400dp"
+                android:minHeight="300dp" />
+
         </activity>
 
         <provider

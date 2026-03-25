@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -59,7 +60,9 @@ data class ProcessItem(
     val state: String,
     val threads: Int,
     val cpuPercent: Float,
-    val memoryMb: Float
+    val memoryMb: Float,
+    val isRecentTask: Boolean,
+    val isSystem: Boolean
 )
 
 enum class SortColumn { NAME, STATE, THREADS, CPU, MEMORY }
@@ -186,6 +189,8 @@ private suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Fl
             val sysDelta = if (snapBefore.sysStat != null && snapAfter.sysStat != null)
                 (snapAfter.sysStat.total - snapBefore.sysStat.total).coerceAtLeast(1L) else 1L
 
+            val recentPackages = getRecentPackages()
+
             val items = entries.mapNotNull { (pid, rssKb, processName) ->
                 val pidStatBefore = snapBefore.pidStats[pid]
                 val pidStatAfter = snapAfter.pidStats[pid]
@@ -217,6 +222,11 @@ private suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Fl
                     }
                 }
 
+
+                val isRecent  = recentPackages.any { processName == it || processName.startsWith("$it:") }
+
+                val isSystemProcess = (cacheInfo.uid ?: 0) < 10000
+
                 val memoryMb = rssKb / 1024f
                 if (memoryMb < 0.1f && cpuPct == 0f && threads == 0) return@mapNotNull null
 
@@ -227,7 +237,9 @@ private suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Fl
                     state       = stateWord,
                     threads     = threads,
                     cpuPercent  = cpuPct,
-                    memoryMb    = memoryMb
+                    memoryMb    = memoryMb,
+                    isRecentTask = isRecent,
+                    isSystem = isSystemProcess
                 )
             }
 
@@ -236,6 +248,19 @@ private suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Fl
             Pair(emptyList(), 0f)
         }
     }
+
+private fun getRecentPackages(): Set<String> {
+    val out = shellExec("dumpsys activity recents | grep 'realActivity='")
+    // Output looks like: realActivity={com.android.chrome/com.google...}
+    return out.lines()
+        .mapNotNull { line ->
+            line.substringAfter("realActivity={", "")
+                .substringBefore("/", "")
+                .trim()
+                .ifBlank { null }
+        }.toSet()
+}
+
 // --- Main composable ---
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -244,9 +269,10 @@ fun TaskManager() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var searchQuery    by remember { mutableStateOf("") }
-    var sortColumn     by remember { mutableStateOf(SortColumn.CPU) }
-    var sortAscending  by remember { mutableStateOf(false) }
-    var selectedPackage by remember { mutableStateOf<String?>(null) }
+    var sortColumn     by remember { mutableStateOf(SortColumn.NAME) }
+    var sortAscending  by remember { mutableStateOf(true) }
+    var selectedPid by remember { mutableStateOf<Int?>(null) }
+    val focusRequester = remember { FocusRequester() }
     var processes      by remember { mutableStateOf<List<ProcessItem>>(emptyList()) }
     var isLoading      by remember { mutableStateOf(true) }
     var shizukuReady   by remember { mutableStateOf(
@@ -254,7 +280,7 @@ fun TaskManager() {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
     )}
 
-    var colName    by remember { mutableStateOf(200.dp) }
+    var colName    by remember { mutableStateOf(220.dp) }
     var colState   by remember { mutableStateOf(90.dp) }
     var colThreads by remember { mutableStateOf(80.dp) }
     var colCpu     by remember { mutableStateOf(80.dp) }
@@ -287,17 +313,50 @@ fun TaskManager() {
         }
     }
 
+    val endSelectedTask = {
+        val processToKill = processes.find { it.pid == selectedPid }
+        if (processToKill != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                val basePackage = processToKill.packageName.substringBefore(":")
+                shellExec("am force-stop $basePackage")
+                shellExec("kill -9 ${processToKill.pid}")
+            }
+        }
+        selectedPid = null // Clear selection after killing
+    }
+
     val filtered = processes
         .filter { it.name.contains(searchQuery, ignoreCase = true) }
         .sortedWith { a, b ->
-            val r = when (sortColumn) {
-                SortColumn.NAME    -> a.name.compareTo(b.name, ignoreCase = true)
-                SortColumn.STATE   -> a.state.compareTo(b.state, ignoreCase = true)
-                SortColumn.THREADS -> a.threads.compareTo(b.threads)
-                SortColumn.CPU     -> a.cpuPercent.compareTo(b.cpuPercent)
-                SortColumn.MEMORY  -> a.memoryMb.compareTo(b.memoryMb)
+            if (sortColumn == SortColumn.NAME) {
+                // 1. Always keep Category order consistent (Apps -> Background -> Android)
+                // We usually don't want "Android processes" at the very top of the screen
+                fun getWeight(i: ProcessItem) = when {
+                    i.isRecentTask -> 0
+                    !i.isSystem -> 1
+                    else -> 2
+                }
+
+                val weightCompare = getWeight(a).compareTo(getWeight(b))
+
+                if (weightCompare != 0) {
+                    weightCompare // Categories always stay in 0, 1, 2 order
+                } else {
+                    // 2. Sort by name WITHIN the category, respecting the toggle
+                    val nameCompare = a.name.compareTo(b.name, ignoreCase = true)
+                    if (sortAscending) nameCompare else -nameCompare
+                }
+            } else {
+                // 3. Sorting for other columns (CPU, Memory, etc.)
+                val r = when (sortColumn) {
+                    SortColumn.STATE   -> a.state.compareTo(b.state, ignoreCase = true)
+                    SortColumn.THREADS -> a.threads.compareTo(b.threads)
+                    SortColumn.CPU     -> a.cpuPercent.compareTo(b.cpuPercent)
+                    SortColumn.MEMORY  -> a.memoryMb.compareTo(b.memoryMb)
+                    else -> 0
+                }
+                if (sortAscending) r else -r
             }
-            if (sortAscending) r else -r
         }
 
     val totalCpu   = processes.sumOf { it.cpuPercent.toDouble() }.toFloat().coerceAtMost(100f)
@@ -384,6 +443,15 @@ fun TaskManager() {
                             .horizontalScroll(scrollState)
                             .weight(1f)
                             .fillMaxWidth()
+                            .processListGestures(
+                                filtered = filtered,
+                                selectedPid = selectedPid,
+                                onSelectionChange = { selectedPid = it },
+                                lazyListState = lazyListState,
+                                coroutineScope = coroutineScope,
+                                focusRequester = focusRequester,
+                                onEndTask = endSelectedTask
+                            )
                             // 1. Get container coordinates
                             .onGloballyPositioned { containerCoordinates = it }
                             // 2. Track global mouse position
@@ -427,52 +495,84 @@ fun TaskManager() {
                         HorizontalDivider(modifier = Modifier.width(dividerWidth))
 
                         LazyColumn(state = lazyListState) {
-                            items(filtered, key = { it.pid }) { process ->
+                            // 1. Calculate the groups ONCE at the top of the LazyColumn
+                            val grouped = if (sortColumn == SortColumn.NAME) {
+                                filtered.groupBy { item ->
+                                    when {
+                                        item.isRecentTask -> "Apps"
+                                        !item.isSystem -> "Background processes"
+                                        else -> "Android processes"
+                                    }
+                                }
+                            } else {
+                                mapOf("" to filtered)
+                            }
 
-                                val isHovered by remember(mousePosition) {
-                                    derivedStateOf {
-                                        // Forces recalculation during scrolling
-                                        lazyListState.firstVisibleItemScrollOffset
+                            // 2. Iterate through the groups
+                            grouped.forEach { (category, itemsInGroup) ->
 
-                                        val currentRect = itemPositions[process.pid]
-
-                                        // Because mousePosition is a Compose State, reading it inside
-                                        // derivedStateOf automatically tracks it without needing it as a remember key.
-                                        if (mousePosition != null && currentRect != null) {
-                                            currentRect.contains(mousePosition!!)
-                                        } else {
-                                            false
-                                        }
+                                // 3. Add the Category Header (Apps / Background processes)
+                                if (category.isNotEmpty()) {
+                                    this@LazyColumn.item(key = category) {
+                                        CategoryHeader(
+                                            text = category,
+                                            count = itemsInGroup.size,
+                                            colName = colName,
+                                            colState = colState,
+                                            colThreads = colThreads,
+                                            colCpu = colCpu,
+                                            colMemory = colMemory
+                                        )
                                     }
                                 }
 
-                                ProcessRow(
-                                    process     = process,
-                                    isSelected  = selectedPackage == process.packageName,
-                                    isHovered   = isHovered, // Pass it down
-                                    // 5. Report layout coordinates up to the map
-                                    modifier = Modifier.onGloballyPositioned { coords ->
-                                        containerCoordinates?.let { parent ->
-                                            if (coords.isAttached) {
-                                                itemPositions[process.pid] = parent.localBoundingBoxOf(coords)
+                                // 4. Add the actual Process Rows for this specific group
+                                this@LazyColumn.items(itemsInGroup, key = { it.pid }) { process ->
+
+                                    // --- Hover Logic (Placed correctly inside the final items block) ---
+                                    var itemRect by remember { mutableStateOf<Rect?>(null) }
+                                    val isHovered by remember(processes) {
+                                        derivedStateOf {
+                                            // Force refresh on scroll
+                                            lazyListState.firstVisibleItemScrollOffset
+
+                                            val currentRect = itemRect
+                                            val mouse = mousePosition
+                                            if (mouse != null && currentRect != null) {
+                                                currentRect.contains(mouse)
+                                            } else {
+                                                false
                                             }
                                         }
-                                    },
-                                    colName     = colName,
-                                    colState    = colState,
-                                    colThreads  = colThreads,
-                                    colCpu      = colCpu,
-                                    colMemory   = colMemory,
-                                    onClick = {
-                                        selectedPackage =
-                                            if (selectedPackage == process.packageName) null
-                                            else process.packageName
                                     }
-                                )
-                                HorizontalDivider(
-                                    thickness = 0.5.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                                )
+
+                                    ProcessRow(
+                                        process = process,
+                                        isSelected = selectedPid == process.pid,
+                                        isHovered = isHovered,
+                                        modifier = Modifier.onGloballyPositioned { coords ->
+                                            containerCoordinates?.let { parent ->
+                                                if (coords.isAttached && parent.isAttached) {
+                                                    itemRect = parent.localBoundingBoxOf(coords)
+                                                }
+                                            }
+                                        },
+                                        colName = colName,
+                                        colState = colState,
+                                        colThreads = colThreads,
+                                        colCpu = colCpu,
+                                        colMemory = colMemory,
+                                        onClick = {
+                                            selectedPid = if (selectedPid == process.pid) null else process.pid
+                                            focusRequester.requestFocus()
+                                        }
+                                    )
+
+                                    HorizontalDivider(
+                                        thickness = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -482,25 +582,8 @@ fun TaskManager() {
             HorizontalDivider()
 
             ActionBar(
-                hasSelection = selectedPackage != null,
-                onEndTask = {
-                    selectedPackage?.let { pkg ->
-                        val processToKill = processes.find { it.packageName == pkg }
-                        coroutineScope.launch(Dispatchers.IO) {
-                            // Remove process suffix (e.g., ":bg") to get the base package name
-                            val basePackage = pkg.substringBefore(":")
-
-                            // Try force-stopping the app package first
-                            shellExec("am force-stop $basePackage")
-
-                            // Fallback for native processes/daemons
-                            if (processToKill != null) {
-                                shellExec("kill -9 ${processToKill.pid}")
-                            }
-                        }
-                    }
-                    selectedPackage = null // Clear selection after killing
-                }
+                hasSelection = selectedPid != null,
+                onEndTask = endSelectedTask
             )
         }
     }
@@ -779,5 +862,58 @@ fun VerticalResizeHandle(
             modifier = Modifier.width(1.dp),
             color = MaterialTheme.colorScheme.outlineVariant
         )
+    }
+}
+
+@Composable
+fun CategoryHeader(
+    text: String,
+    count: Int,
+    colName: Dp,
+    colState: Dp,
+    colThreads: Dp,
+    colCpu: Dp,
+    colMemory: Dp
+) {
+    Row(
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.surface)
+            .height(32.dp), // Match the height of ProcessRow for consistency
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // First Column (Name)
+        Row(
+            modifier = Modifier.width(colName).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "$text ($count)",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+                overflow = TextOverflow.Ellipsis,
+                maxLines = 1
+            )
+        }
+
+        // Match the dividers used in ProcessRow
+        VerticalDivider()
+
+        // Empty State Column
+        Box(modifier = Modifier.width(colState))
+        VerticalDivider()
+
+        // Empty Threads Column
+        Box(modifier = Modifier.width(colThreads))
+        VerticalDivider()
+
+        // Empty CPU Column
+        Box(modifier = Modifier.width(colCpu))
+        VerticalDivider()
+
+        // Empty Memory Column
+        Box(modifier = Modifier.width(colMemory))
+        VerticalDivider()
     }
 }

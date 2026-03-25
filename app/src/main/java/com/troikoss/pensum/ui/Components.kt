@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager.ui
+package com.troikoss.pensum.ui
 
 import android.content.pm.PackageManager
 import android.view.PointerIcon
@@ -49,8 +49,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.troikoss.taskmanager.utils.ProcessItem
-import com.troikoss.taskmanager.utils.SortColumn
+import com.troikoss.pensum.utils.ProcessItem
+import com.troikoss.pensum.utils.SortColumn
 
 
 // --- Action bar ---

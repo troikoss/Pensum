@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager.ui
+package com.troikoss.pensum.ui
 
 import android.content.pm.PackageManager
 import androidx.compose.foundation.horizontalScroll
@@ -27,11 +27,11 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.troikoss.taskmanager.utils.ProcessItem
-import com.troikoss.taskmanager.utils.SortColumn
-import com.troikoss.taskmanager.utils.fetchProcesses
-import com.troikoss.taskmanager.utils.processListGestures
-import com.troikoss.taskmanager.utils.shellExec
+import com.troikoss.pensum.utils.ProcessItem
+import com.troikoss.pensum.utils.SortColumn
+import com.troikoss.pensum.utils.fetchProcesses
+import com.troikoss.pensum.utils.processListGestures
+import com.troikoss.pensum.utils.shellExec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager.utils
+package com.troikoss.pensum.utils
 
 import android.content.Context
 import android.content.pm.PackageManager

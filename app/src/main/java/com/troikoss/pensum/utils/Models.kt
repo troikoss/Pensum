@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager.utils
+package com.troikoss.pensum.utils
 
 data class ProcessItem(
     val name: String,

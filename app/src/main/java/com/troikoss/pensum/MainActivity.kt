@@ -1,11 +1,11 @@
-package com.troikoss.taskmanager
+package com.troikoss.pensum
 
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.troikoss.taskmanager.ui.TaskManager
-import com.troikoss.taskmanager.ui.theme.TaskManagerTheme
+import com.troikoss.pensum.ui.TaskManager
+import com.troikoss.pensum.ui.theme.TaskManagerTheme
 import rikka.shizuku.Shizuku
 
 class MainActivity : ComponentActivity() {

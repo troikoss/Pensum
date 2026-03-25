@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager.ui.theme
+package com.troikoss.pensum.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

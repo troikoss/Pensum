@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager
+package com.troikoss.taskmanager.ui
 
 import android.content.pm.PackageManager
 import androidx.compose.foundation.horizontalScroll

@@ -2,12 +2,16 @@ package com.troikoss.taskmanager
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.view.PointerIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -17,13 +21,25 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -238,6 +254,17 @@ fun TaskManager() {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
     )}
 
+    var colName    by remember { mutableStateOf(200.dp) }
+    var colState   by remember { mutableStateOf(90.dp) }
+    var colThreads by remember { mutableStateOf(80.dp) }
+    var colCpu     by remember { mutableStateOf(80.dp) }
+    var colMemory  by remember { mutableStateOf(100.dp) }
+
+    var mousePosition by remember { mutableStateOf<Offset?>(null) }
+    val itemPositions = remember { mutableStateMapOf<Int, Rect>() }
+    var containerCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val lazyListState = rememberLazyListState()
+
     // Re-check whenever Shizuku binder state changes
     DisposableEffect(Unit) {
         val listener = Shizuku.OnBinderReceivedListener {
@@ -357,12 +384,40 @@ fun TaskManager() {
                             .horizontalScroll(scrollState)
                             .weight(1f)
                             .fillMaxWidth()
+                            // 1. Get container coordinates
+                            .onGloballyPositioned { containerCoordinates = it }
+                            // 2. Track global mouse position
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val firstChange = event.changes.firstOrNull() ?: continue
+                                        if (firstChange.type == PointerType.Mouse) {
+                                            if (event.type == PointerEventType.Move || event.type == PointerEventType.Enter) {
+                                                mousePosition = firstChange.position
+                                            } else if (event.type == PointerEventType.Exit) {
+                                                mousePosition = null
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                     ) {
                         ProcessTableHeader(
                             sortColumn    = sortColumn,
                             sortAscending = sortAscending,
                             totalCpuPct   = totalCpu,
                             totalMemPct   = memPercent,
+                            colName       = colName,
+                            colState      = colState,
+                            colThreads    = colThreads,
+                            colCpu        = colCpu,
+                            colMemory     = colMemory,
+                            onResizeName    = { colName    = (colName    + it).coerceAtLeast(60.dp) },
+                            onResizeState   = { colState   = (colState   + it).coerceAtLeast(60.dp) },
+                            onResizeThreads = { colThreads = (colThreads + it).coerceAtLeast(40.dp) },
+                            onResizeCpu     = { colCpu     = (colCpu     + it).coerceAtLeast(50.dp) },
+                            onResizeMemory  = { colMemory  = (colMemory  + it).coerceAtLeast(60.dp) },
                             onSort = { col ->
                                 if (sortColumn == col) sortAscending = !sortAscending
                                 else { sortColumn = col; sortAscending = false }
@@ -371,12 +426,44 @@ fun TaskManager() {
 
                         HorizontalDivider(modifier = Modifier.width(dividerWidth))
 
-                        LazyColumn {
+                        LazyColumn(state = lazyListState) {
                             items(filtered, key = { it.pid }) { process ->
+
+                                val isHovered by remember(mousePosition) {
+                                    derivedStateOf {
+                                        // Forces recalculation during scrolling
+                                        lazyListState.firstVisibleItemScrollOffset
+
+                                        val currentRect = itemPositions[process.pid]
+
+                                        // Because mousePosition is a Compose State, reading it inside
+                                        // derivedStateOf automatically tracks it without needing it as a remember key.
+                                        if (mousePosition != null && currentRect != null) {
+                                            currentRect.contains(mousePosition!!)
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                }
+
                                 ProcessRow(
-                                    process    = process,
-                                    isSelected = selectedPackage == process.packageName,
-                                    onClick    = {
+                                    process     = process,
+                                    isSelected  = selectedPackage == process.packageName,
+                                    isHovered   = isHovered, // Pass it down
+                                    // 5. Report layout coordinates up to the map
+                                    modifier = Modifier.onGloballyPositioned { coords ->
+                                        containerCoordinates?.let { parent ->
+                                            if (coords.isAttached) {
+                                                itemPositions[process.pid] = parent.localBoundingBoxOf(coords)
+                                            }
+                                        }
+                                    },
+                                    colName     = colName,
+                                    colState    = colState,
+                                    colThreads  = colThreads,
+                                    colCpu      = colCpu,
+                                    colMemory   = colMemory,
+                                    onClick = {
                                         selectedPackage =
                                             if (selectedPackage == process.packageName) null
                                             else process.packageName
@@ -448,19 +535,24 @@ fun ActionBar(hasSelection: Boolean, onEndTask: () -> Unit) {
 @Composable
 fun ProcessTableHeader(
     sortColumn: SortColumn, sortAscending: Boolean,
-    totalCpuPct: Float, totalMemPct: Float, onSort: (SortColumn) -> Unit
+    totalCpuPct: Float, totalMemPct: Float,
+    colName: Dp, colState: Dp, colThreads: Dp, colCpu: Dp, colMemory: Dp,
+    onResizeName: (Dp) -> Unit, onResizeState: (Dp) -> Unit,
+    onResizeThreads: (Dp) -> Unit, onResizeCpu: (Dp) -> Unit,
+    onResizeMemory: (Dp) -> Unit,
+    onSort: (SortColumn) -> Unit
 ) {
-    Row (Modifier.height(50.dp)) {
-        HeaderCell("Name",    null, Modifier.width(200.dp), SortColumn.NAME,    sortColumn, sortAscending, onSort)
-        VerticalDivider()
-        HeaderCell("State",   null, Modifier.width(90.dp),  SortColumn.STATE,   sortColumn, sortAscending, onSort)
-        VerticalDivider()
-        HeaderCell("Threads", null, Modifier.width(80.dp),  SortColumn.THREADS, sortColumn, sortAscending, onSort)
-        VerticalDivider()
-        HeaderCell("CPU",     "%.0f%%".format(totalCpuPct), Modifier.width(80.dp),  SortColumn.CPU,     sortColumn, sortAscending, onSort)
-        VerticalDivider()
-        HeaderCell("Memory",  "%.0f%%".format(totalMemPct), Modifier.width(100.dp), SortColumn.MEMORY,  sortColumn, sortAscending, onSort)
-        VerticalDivider()
+    Row(Modifier.height(50.dp)) {
+        HeaderCell("Name",    null,                             Modifier.width(colName),    SortColumn.NAME,    sortColumn, sortAscending, onSort)
+        VerticalResizeHandle(onResize = onResizeName)
+        HeaderCell("State",   null,                             Modifier.width(colState),   SortColumn.STATE,   sortColumn, sortAscending, onSort)
+        VerticalResizeHandle(onResize = onResizeState)
+        HeaderCell("Threads", null,                             Modifier.width(colThreads), SortColumn.THREADS, sortColumn, sortAscending, onSort)
+        VerticalResizeHandle(onResize = onResizeThreads)
+        HeaderCell("CPU",     "%.0f%%".format(totalCpuPct),    Modifier.width(colCpu),     SortColumn.CPU,     sortColumn, sortAscending, onSort)
+        VerticalResizeHandle(onResize = onResizeCpu)
+        HeaderCell("Memory",  "%.0f%%".format(totalMemPct),    Modifier.width(colMemory),  SortColumn.MEMORY,  sortColumn, sortAscending, onSort)
+        VerticalResizeHandle(onResize = onResizeMemory)
     }
 }
 
@@ -518,7 +610,13 @@ fun HeaderCell(
 // --- Process row ---
 
 @Composable
-fun ProcessRow(process: ProcessItem, isSelected: Boolean, onClick: () -> Unit) {
+fun ProcessRow(
+    process: ProcessItem, isSelected: Boolean,
+    isHovered: Boolean,
+    modifier: Modifier = Modifier,
+    colName: Dp, colState: Dp, colThreads: Dp, colCpu: Dp, colMemory: Dp,
+    onClick: () -> Unit
+) {
     val context = LocalContext.current
     val appIcon = remember(process.packageName) {
         try { context.packageManager.getApplicationIcon(process.packageName.substringBefore(":")) }
@@ -526,37 +624,49 @@ fun ProcessRow(process: ProcessItem, isSelected: Boolean, onClick: () -> Unit) {
     }
 
     Row(
-        modifier = Modifier.background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
-            .clickable(onClick = onClick).height(32.dp),
+        modifier = modifier
+            .background(
+                when {
+                    isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    isHovered -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f) // Your hover effect!
+                    else -> Color.Transparent
+                }
+            )
+            .clickable(onClick = onClick)
+            .height(32.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Name Cell
         Row(
-            modifier = Modifier.width(200.dp).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.width(colName).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (appIcon != null) { AsyncImage(model = appIcon, contentDescription = null, modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp))) }
-            else { Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Text(process.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (appIcon != null) {
+                AsyncImage(model = appIcon, contentDescription = null,
+                    modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)))
+            } else {
+                Icon(Icons.Default.Settings, contentDescription = null,
+                    modifier = Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(process.name, style = MaterialTheme.typography.bodySmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         VerticalDivider()
 
-        // State Cell (Left Aligned just like Name)
-        Box(modifier = Modifier.width(90.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-            Text(process.state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(modifier = Modifier.width(colState).padding(horizontal = 12.dp),
+            contentAlignment = Alignment.CenterStart) {
+            Text(process.state, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         VerticalDivider()
 
-        // Threads Cell (Right Aligned like CPU/Memory)
-        DataCell(process.threads.toString(), Modifier.width(80.dp))
+        DataCell(process.threads.toString(), Modifier.width(colThreads))
         VerticalDivider()
-
-        // CPU Cell
-        HeatCell(process.cpuPercent, 100f, "%.1f%%".format(process.cpuPercent), Modifier.width(80.dp))
+        HeatCell(process.cpuPercent, 100f, "%.1f%%".format(process.cpuPercent), Modifier.width(colCpu))
         VerticalDivider()
-
-        // Memory Cell
-        HeatCell(process.memoryMb, 512f, "%.0f MB".format(process.memoryMb), Modifier.width(100.dp))
+        HeatCell(process.memoryMb, 512f, "%.0f MB".format(process.memoryMb), Modifier.width(colMemory))
         VerticalDivider()
     }
 }
@@ -611,5 +721,63 @@ fun DataCell(text: String, modifier: Modifier) {
         contentAlignment = Alignment.CenterEnd) {
         Text(text, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+fun VerticalResizeHandle(
+    onResize: (Dp) -> Unit,
+    modifier: Modifier = Modifier,
+    contentAlignment: Alignment = Alignment.Center
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+
+    val resizeIcon = remember(context) {
+        androidx.compose.ui.input.pointer.PointerIcon(
+            PointerIcon.getSystemIcon(context, PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW)
+        )
+    }
+
+    Box(
+        modifier = modifier
+            // 1. Tell the parent Row that this handle only takes up 1.dp of space
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                val layoutWidth = 1.dp.roundToPx() // Matches standard VerticalDivider width
+
+                layout(layoutWidth, placeable.height) {
+                    // Center the 16dp touch area over the 1dp layout line
+                    val xOffset = -(placeable.width - layoutWidth) / 2
+                    placeable.place(xOffset, 0)
+                }
+            }
+            // 2. But keep the actual touch target 16.dp wide so it's easy to grab
+            .width(16.dp)
+            .pointerHoverIcon(resizeIcon)
+            .pointerInput(onResize) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val dragChange = event.changes.firstOrNull() ?: break
+                        if (!dragChange.pressed) break
+                        val deltaPx = dragChange.positionChange().x
+                        if (deltaPx != 1f) {
+                            val deltaDp = with(density) { deltaPx.toDp() }
+                            onResize(deltaDp)
+                            dragChange.consume()
+                        }
+                    }
+                }
+            },
+        contentAlignment = contentAlignment
+    ) {
+        // The visible 1.dp line
+        VerticalDivider(
+            modifier = Modifier.width(1.dp),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
     }
 }

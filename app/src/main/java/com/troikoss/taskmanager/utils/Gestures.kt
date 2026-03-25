@@ -1,4 +1,4 @@
-package com.troikoss.taskmanager
+package com.troikoss.taskmanager.utils
 
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.lazy.LazyListState

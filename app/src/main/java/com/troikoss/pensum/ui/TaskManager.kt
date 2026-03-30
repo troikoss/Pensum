@@ -139,7 +139,7 @@ fun TaskManager() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Task Manager", fontWeight = FontWeight.SemiBold) },
+                title = { Text("Pensum", fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     Icon(
                         Icons.Default.Build,

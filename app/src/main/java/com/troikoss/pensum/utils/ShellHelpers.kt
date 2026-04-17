@@ -2,7 +2,6 @@ package com.troikoss.pensum.utils
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext

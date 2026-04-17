@@ -11,6 +11,7 @@ data class ProcessItem(
     val isRecentTask: Boolean,
     val isSystem: Boolean,
     val isForeground: Boolean,
+    val isKernelTask: Boolean,
     val uid: Int
 )
 

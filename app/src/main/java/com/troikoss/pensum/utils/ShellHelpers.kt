@@ -156,7 +156,8 @@ suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Float> =
 
                 val cacheInfo = appCache.getOrPut(processName) {
                     try {
-                        val info = pm.getApplicationInfo(processName, 0)
+                        val packageName = processName.substringBefore(":")
+                        val info = pm.getApplicationInfo(packageName, 0)
                         AppCacheInfo(pm.getApplicationLabel(info).toString(), info.uid)
                     } catch (_: PackageManager.NameNotFoundException) {
                         val fallback = processName.substringAfterLast(".").replaceFirstChar { it.uppercaseChar() }.ifBlank { processName }
@@ -167,6 +168,7 @@ suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Float> =
                 val currentUid = cacheInfo.uid ?: -1
 
                 val isSystemProcess = (cacheInfo.uid ?: 0) < 10000
+                val isKernelTask = processName.startsWith("[") && processName.endsWith("]")
 
                 val memoryMb = rssKb / 1024f
                 if (memoryMb < 0.1f && cpuPct == 0f && threads == 0) return@mapNotNull null
@@ -182,6 +184,7 @@ suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Float> =
                     isRecentTask = isRecent,
                     isSystem = isSystemProcess,
                     isForeground = isForeground,
+                    isKernelTask = isKernelTask,
                     uid = currentUid
                 )
             }

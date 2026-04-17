@@ -220,7 +220,11 @@ fun ProcessRow(
             }
 
             Text(
-                text = if (isSubProcess) process.packageName.substringAfter(":") else process.name,
+                text = when {
+                    isSubProcess && process.isKernelTask -> process.packageName
+                    isSubProcess -> process.packageName.substringAfter(":")
+                    else -> process.name
+                },
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

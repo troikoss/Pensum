@@ -132,7 +132,7 @@ fun TaskManager() {
             }
         }
 
-    val expandedGroups = remember { mutableStateOf(setOf<Int>()) }
+    val expandedGroups = remember { mutableStateOf(setOf<String>()) }
 
     val totalCpu   = processes.sumOf { it.cpuPercent.toDouble() }.toFloat().coerceAtMost(100f)
 
@@ -300,15 +300,22 @@ fun TaskManager() {
                                     }
                                 }
 
-                                // 3. Sub-group items in this category by UID (User ID)
-                                val subGroups = itemsInCategory.groupBy { it.uid }
+                                // 3. Sub-group items in this category by UID and collapse all kernel tasks into one meta-group
+                                val subGroups = itemsInCategory.groupBy {
+                                    if (it.isKernelTask) "kernel_tasks" else "uid_${it.uid}"
+                                }
 
-                                subGroups.forEach { (uid, processesInUid) ->
-                                    val isMultiProcess = processesInUid.size > 1
-                                    val isExpanded = expandedGroups.value.contains(uid)
+                                subGroups.forEach { (groupKey, processesInUid) ->
+                                    val isKernelGroup = groupKey == "kernel_tasks"
+                                    val isMultiProcess = isKernelGroup || processesInUid.size > 1
+                                    val isExpanded = expandedGroups.value.contains(groupKey)
 
                                     // The "Main" process for the header (usually the one with most memory)
                                     val mainProcess = processesInUid.maxByOrNull { it.memoryMb } ?: processesInUid.first()
+                                    val headerProcess = if (isKernelGroup)
+                                        mainProcess.copy(name = "Kernel tasks")
+                                    else
+                                        mainProcess
 
                                     // 4. THE GROUP HEADER (OR SINGLE PROCESS)
                                     this@LazyColumn.item(key = "group_header_${mainProcess.pid}") {
@@ -328,7 +335,7 @@ fun TaskManager() {
                                         }
 
                                         ProcessRow(
-                                            process = mainProcess.copy(
+                                            process = headerProcess.copy(
                                                 cpuPercent = totalCpu,
                                                 memoryMb = totalMem,
                                                 threads = totalThreads
@@ -338,7 +345,7 @@ fun TaskManager() {
                                             isHeader = isMultiProcess,         // New param for Chevron
                                             isExpanded = isExpanded,           // New param for Chevron state
                                             onExpandToggle = {                 // Logic to open/close
-                                                expandedGroups.value = if (isExpanded) expandedGroups.value - uid else expandedGroups.value + uid
+                                                expandedGroups.value = if (isExpanded) expandedGroups.value - groupKey else expandedGroups.value + groupKey
                                             },
                                             modifier = Modifier.onGloballyPositioned { coords ->
                                                 containerCoordinates?.let { parent ->

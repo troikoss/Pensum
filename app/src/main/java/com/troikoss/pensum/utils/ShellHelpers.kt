@@ -2,6 +2,7 @@ package com.troikoss.pensum.utils
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -156,7 +157,8 @@ suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Float> =
 
                 val cacheInfo = appCache.getOrPut(processName) {
                     try {
-                        val info = pm.getApplicationInfo(processName, 0)
+                        val packageName = processName.substringBefore(":")
+                        val info = pm.getApplicationInfo(packageName, 0)
                         AppCacheInfo(pm.getApplicationLabel(info).toString(), info.uid)
                     } catch (_: PackageManager.NameNotFoundException) {
                         val fallback = processName.substringAfterLast(".").replaceFirstChar { it.uppercaseChar() }.ifBlank { processName }

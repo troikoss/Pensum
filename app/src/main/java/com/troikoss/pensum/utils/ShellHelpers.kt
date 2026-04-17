@@ -169,6 +169,7 @@ suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Float> =
                 val currentUid = cacheInfo.uid ?: -1
 
                 val isSystemProcess = (cacheInfo.uid ?: 0) < 10000
+                val isKernelTask = processName.startsWith("[") && processName.endsWith("]")
 
                 val memoryMb = rssKb / 1024f
                 if (memoryMb < 0.1f && cpuPct == 0f && threads == 0) return@mapNotNull null
@@ -184,6 +185,7 @@ suspend fun fetchProcesses(context: Context): Pair<List<ProcessItem>, Float> =
                     isRecentTask = isRecent,
                     isSystem = isSystemProcess,
                     isForeground = isForeground,
+                    isKernelTask = isKernelTask,
                     uid = currentUid
                 )
             }
